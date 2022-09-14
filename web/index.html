@@ -1,0 +1,121 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<script src="https://web-9gikcbug35bad3a8-1304825656.tcloudbaseapp.com/sdk/1.3.0/cloud.js"></script>
+<script src="https://web-9gikcbug35bad3a8-1304825656.tcloudbaseapp.com/sdk/1.3.1/mplogin.min.js"></script>
+<script>
+  // 公众号SDK发起支付文档：https://developers.weixin.qq.com/doc/offiaccount/OA_Web_Apps/JS-SDK.html#58
+  /**
+   * 通过本地存储用时间戳的方式设置支付ID
+   */
+  function initnoid(flag=false){
+    window.nowtime = localStorage.getItem('WERUN_NOID')
+    if(window.nowtime==null||window.nowtime==''||flag==true){
+      window.nowtime = new Date().getTime()
+      localStorage.setItem('WERUN_NOID',window.nowtime)
+    }
+    toquery() // 设置后查询一下该订单的状态
+    console.log('支付ID',window.nowtime)
+  }
+  /**
+   * 用本地存储的ID发起支付订单，设置1分钱
+   */
+  async function toorder(){
+    const res = await callapi('unifiedOrder')
+    if((res.respdata||{}).payment!=null){
+      toquery() // 发起订单后查询一下该订单的状态
+      const { timeStamp, signType, paySign, package, nonceStr } = res.respdata.payment
+      wx.chooseWXPay({ // 微信SDK传入支付信息
+        timestamp: parseInt(timeStamp),
+        nonceStr: nonceStr,
+        package: package,
+        signType: signType, 
+        paySign: paySign,
+        success: function (res) {
+          console.log(res)
+        }
+      })
+    }
+  }
+  /**
+   * 用本地存储的ID查询订单的付款状态
+   */
+  async function toquery(){
+    document.getElementById('show').innerHTML = ''
+    const res = await callapi('queryorder')
+    document.getElementById('show').innerHTML = (res.respdata.err_code_des || res.respdata.trade_state_desc)
+  }
+  /**
+   * 用本地存储的ID发起订单退款
+   */
+  async function torefund(){
+    const res = await callapi('refund')
+    toquery() // 退款后查询一下该订单的状态
+  }
+  /**
+   * 用本地存储的ID发起订单退款
+   */
+  async function callapi(api=null){
+    // 向云托管服务发起调用
+    if(api!=null){
+      const callres = await window.app.callContainer({
+        path: `/${api}`,              // 填入业务自定义路径和参数，根目录，就是 / 
+        method: 'POST',               // 按照自己的业务开发，选择对应的方法
+        header: {
+          'X-WX-SERVICE': 'pay',      // xxx中填入服务名称（微信云托管 - 服务管理 - 服务列表 - 服务名称）
+        },
+        data:{
+          text:'测试支付', // 直接设置商品详情，传给后端的，一般需要后端自己设置，在这里用前端的了
+          noid:'WERUNMP_'+window.nowtime, // 用本地存储ID组成订单ID，一般需要后端自己设置，在这里用前端的了
+          fee:1 // 费用设置1分钱，一般需要后端自己设置，在这里用前端的了
+          // noid是每个接口必备的，发起支付和退款才需要其他的，具体看后端服务接收逻辑
+        }
+      })
+      console.log(callres)
+      return callres.data||{}
+    } else {
+      return null
+    }
+  }
+  window.onload = async function () {
+    const vConsole = new window.VConsole();
+    // 使用登录模块，传入信息开始授权登录过程
+    // 如果首次登录，页面会经历一系列跳转过程，请不要在登录前加业务处理代码，以免登录被中断。
+    const result = await window.mplogin({
+      scope: "snsapi_base",                 // 必填，登录方式：snsapi_userinfo、snsapi_base
+      appid: '这里替换服务号APPID',           // 必填，公众号appid，将以此 appid 名义进行请求
+      envid: '这里替换云托管环境ID',                          // 选填，资源方微信云托管环境，如果传递此参数则会返回初始化的 cloud 操作对象
+      resourceAppid: '资源共享方APPID，无共享则同appid一致',   // 选填，如果是资源复用模式，需要填环境共享下资源方微信账号
+      signature: window.location.href,       // 选填，如果需要微信 SDK 的API方法，则填写要使用的地址，会返回 signature 签名对象，envid参数不填则无效。
+    })
+    console.log(result)
+    if (result.ret === 0) {                 // ret为0时，代表登录已经完成，可以进行业务操作
+      window.app = result.cloud             // result.cloud 返回初始化可操作的 cloud 函数对象，将其放置全局
+      // 初始化支付ID
+      initnoid()
+      // 监听签名注册成功
+      wx.ready(function () {
+        console.log('WX监听完成')
+      })
+      // 发起签名注册，是一个异步操作，成功会触发wx.ready
+      wx.config({
+        appId: '这里替换服务号APPID',                   // 微信公众号appid
+        timestamp: result.signature.timestamp + '',   // 时间戳，从返回 result.signature 中获取
+        nonceStr: result.signature.nonceStr,          // 随机字符串，从返回 result.signature 中获取
+        signature: result.signature.signature,        // 签名，从返回 result.signature 中获取
+        jsApiList: ['chooseWXPay']                    // 注册的 api 列表，在这里选择chooseWXPay
+      })
+    } else {  // ret不为0时，代表登录出现错误，一般出现在开发调试中，正式使用一般只有2-系统拦截错误
+      // 登录出现问题，打印问题描述
+      window.alert(result.msg)
+    }
+  }
+</script>
+<div>
+  <button onclick="initnoid(true)">更新支付ID</button>
+  <button onclick="toorder()">发起支付</button>
+  <button onclick="toquery()">查询订单</button>
+  <button onclick="torefund()">发起退款</button>
+</div>
+<div id="show"></div>
